@@ -14,8 +14,8 @@ edition = "2018"
 
 [dependencies]
 bitvec = "0.18.1"
-clap = "3.0.0-beta.5"
+clap = { version = "4.5.38", features = ["derive"] }
 hound = "3.4.0"
 nom = "7"
-rodio = "0.11.0"
+rodio = "0.20.1"
 thiserror = "1.0"

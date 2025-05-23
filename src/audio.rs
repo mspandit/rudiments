@@ -1,4 +1,4 @@
-use rodio::{self, dynamic_mixer, Source};
+use rodio::{self, OutputStream, dynamic_mixer, source::Source};
 use std::{collections::HashMap, fmt, io::BufReader, path::Path, thread, time::Duration};
 
 use crate::{
@@ -114,13 +114,12 @@ fn play_repeat(
     source: Box<dyn Source<Item = i16> + Send>,
     aggregate_steps: Steps,
 ) -> Result<()> {
-    if let Some(device) = rodio::default_output_device() {
+    if let Ok((_stream, stream_handle)) = OutputStream::try_default() {
         // compute the amount of trailing silence
         let trailing_silence = aggregate_steps.trailing_silent_steps();
 
         // play the pattern
-        rodio::play_raw(
-            &device,
+        if let Ok(()) = stream_handle.play_raw(
             source
                 // forward pad with trailing silence
                 .delay(delay_pad_duration(&tempo, trailing_silence))
@@ -128,12 +127,13 @@ fn play_repeat(
                 .take_duration(measure_duration(&tempo))
                 .repeat_infinite()
                 .convert_samples(),
-        );
-
-        // sleep forever
-        thread::park();
-
-        Ok(())
+        ) {
+            // sleep forever
+            thread::park();
+            Ok(())
+        } else {
+            Err(AudioDeviceError())
+        }
     } else {
         Err(AudioDeviceError())
     }
@@ -141,14 +141,15 @@ fn play_repeat(
 
 /// Plays a mixed pattern once.
 fn play_once(tempo: &Tempo, source: Box<dyn Source<Item = i16> + Send>) -> Result<()> {
-    if let Some(device) = rodio::default_output_device() {
+    if let Ok((_stream, stream_handle)) = OutputStream::try_default() {
         // play the pattern
-        rodio::play_raw(&device, source.convert_samples());
-
-        // sleep for the duration of a single measure
-        thread::sleep(measure_duration(tempo));
-
-        Ok(())
+        if let Ok(_) = stream_handle.play_raw(source.convert_samples()) {
+            // sleep for the duration of a single measure
+            thread::sleep(measure_duration(tempo));
+            Ok(())
+        } else {
+            Err(AudioDeviceError())
+        }
     } else {
         Err(AudioDeviceError())
     }
