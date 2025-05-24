@@ -13,7 +13,7 @@ documentation = "http://docs.rs/rudiments"
 edition = "2018"
 
 [dependencies]
-bitvec = "0.18.1"
+bitvec = "1.0.1"
 clap = { version = "4.5.38", features = ["derive"] }
 hound = "3.4.0"
 nom = "7"

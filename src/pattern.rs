@@ -1,6 +1,6 @@
 extern crate nom;
 
-use bitvec::{prelude::*, slice::Iter};
+use bitvec::{ prelude::{ BitVec, LocalBits }, bitvec, slice::Iter };
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag},
@@ -131,7 +131,7 @@ impl Steps {
     }
 
     /// Returns an immutable iterator over the step values.
-    pub fn iter(&self) -> Iter<LocalBits, usize> {
+    pub fn iter(&self) -> Iter<usize, LocalBits> {
         self.0.iter()
     }
 
