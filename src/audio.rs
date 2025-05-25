@@ -1,10 +1,10 @@
-use rodio::{self, OutputStream, dynamic_mixer, source::Source};
+use rodio::{OutputStream, dynamic_mixer, source::Source};
 use std::{collections::HashMap, fmt, io::BufReader, path::Path, thread, time::Duration};
 
 use crate::{
     error::{Error::*, Result},
-    instrumentation::{Instrumentation, SampleFile},
-    pattern::{Amplitude, Pattern, Steps, BEATS_PER_MEASURE, STEPS_PER_MEASURE},
+    instrumentation::SampleFile,
+    pattern::{Amplitude, Steps},
 };
 
 /// Number of playback channels.
@@ -30,101 +30,73 @@ impl fmt::Display for Tempo {
     }
 }
 
+impl Tempo {
+    /// Computes the duration of a step.
+    pub fn step_duration(&self, beats: usize) -> Duration {
+        Duration::from_secs_f32((beats as f32) * 15.0 / (self.0 as f32))
+    }
+
+    /// Computes the duration to delay a mix with trailing silence when played on repeat.
+    /// This is necessary so that playback of the next iteration begins at the end
+    /// of the current iteration's measure instead of after its final non-silent step.
+    fn delay_pad_duration(&self) -> Duration {
+        self.step_duration(1).mul_f32(self.delay_factor()) * 1 as u32
+    }
+
+    /// Computes a factor necessary for delay-padding a mix played on repeat.
+    fn delay_factor(&self) -> f32 {
+        -1.0 / 120.0 * self.0 as f32 + 2.0
+    }
+}
+
 /// A type that represents the fully bound and reduced tracks of a pattern.
-type Tracks = HashMap<SampleFile, (Steps, Amplitude)>;
+pub struct Tracks(HashMap<SampleFile, (Steps, Amplitude)>);
 
-/// Plays a pattern either once or repeatedly at the tempo given using samples
-/// found in the given path.
-pub fn play(
-    pattern: Pattern,
-    instrumentation: Instrumentation,
-    samples_path: &Path,
-    tempo: Tempo,
-    repeat: bool,
-) -> Result<()> {
-    let (tracks, aggregate_steps) = bind_tracks(pattern, instrumentation);
-    let mix = mix_tracks(&tempo, tracks, samples_path)?;
-
-    if repeat {
-        play_repeat(&tempo, mix, aggregate_steps)
-    } else {
-        play_once(&tempo, mix)
+impl Tracks {
+    pub fn from(hash_map: HashMap<SampleFile, (Steps, Amplitude)>) -> Tracks {
+        Tracks(hash_map)
     }
-}
 
-/// Binds a pattern's step sequences to audio files.
-/// An sequences bound to the same audio file will be unioned.
-/// The smallest amplitude for instruments bound to the same audio file will be used.
-fn bind_tracks(pattern: Pattern, instrumentation: Instrumentation) -> (Tracks, Steps) {
-    let mut aggregate_steps = Steps::zeros();
-    let tracks = instrumentation
-        .into_iter()
-        .map(|(sample_file, instruments)| {
-            let simplified_steps = instruments.iter().fold(
-                (Steps::zeros(), Amplitude::max()),
-                |mut acc, instrument| {
-                    if let Some((steps, amplitude)) = pattern.get(instrument) {
-                        // update the aggregate step sequence
-                        aggregate_steps.union(steps);
+    /// Mixes the tracks together using audio files found in the path given.
+    pub fn mix(
+        &self,
+        tempo: &Tempo,
+        samples_path: &Path,
+    ) -> Result<Box<dyn Source<Item = i16> + Send>> {
+        let (controller, mixer) = dynamic_mixer::mixer(CHANNELS, SAMPLE_RATE);
 
-                        // update the track's step sequence and amplitude
-                        acc.0.union(steps);
-                        acc.1 = acc.1.min(amplitude);
-                    }
+        for (sample_file, (steps, amplitude)) in self.0.iter() {
+            let sample_file_path = sample_file.with_parent(samples_path)?;
+            let file = std::fs::File::open(sample_file_path.path())?;
+            let source = rodio::Decoder::new(BufReader::new(file))?.buffered();
 
-                    acc
-                },
-            );
-
-            (sample_file, simplified_steps)
-        })
-        .collect();
-
-    (tracks, aggregate_steps)
-}
-
-/// Mixes the tracks together using audio files found in the path given.
-fn mix_tracks(
-    tempo: &Tempo,
-    tracks: Tracks,
-    samples_path: &Path,
-) -> Result<Box<dyn Source<Item = i16> + Send>> {
-    let (controller, mixer) = dynamic_mixer::mixer(CHANNELS, SAMPLE_RATE);
-
-    for (sample_file, (steps, amplitude)) in tracks.iter() {
-        let sample_file_path = sample_file.with_parent(samples_path)?;
-        let file = std::fs::File::open(sample_file_path.path())?;
-        let source = rodio::Decoder::new(BufReader::new(file))?.buffered();
-
-        for (i, step) in steps.iter().enumerate() {
-            if !step {
-                continue;
+            for (i, step) in steps.iter().enumerate() {
+                if !step {
+                    continue;
+                }
+                let delay = tempo.step_duration(i);
+                controller.add(source.clone().amplify(amplitude.value()).delay(delay));
             }
-            let delay = step_duration(tempo) * (i as u32);
-            controller.add(source.clone().amplify(amplitude.value()).delay(delay));
         }
-    }
 
-    Ok(Box::new(mixer))
+        Ok(Box::new(mixer))
+    }
 }
 
 /// Plays a mixed pattern repeatedly.
-fn play_repeat(
+pub fn play_repeat(
     tempo: &Tempo,
     source: Box<dyn Source<Item = i16> + Send>,
-    aggregate_steps: Steps,
+    beats: usize,
 ) -> Result<()> {
     if let Ok((_stream, stream_handle)) = OutputStream::try_default() {
-        // compute the amount of trailing silence
-        let trailing_silence = aggregate_steps.trailing_silent_steps();
-
         // play the pattern
         if let Ok(()) = stream_handle.play_raw(
             source
                 // forward pad with trailing silence
-                .delay(delay_pad_duration(&tempo, trailing_silence))
+                .delay(tempo.delay_pad_duration())
                 // trim to measure length
-                .take_duration(measure_duration(&tempo))
+                .take_duration(tempo.step_duration(beats))
                 .repeat_infinite()
                 .convert_samples(),
         ) {
@@ -140,12 +112,16 @@ fn play_repeat(
 }
 
 /// Plays a mixed pattern once.
-fn play_once(tempo: &Tempo, source: Box<dyn Source<Item = i16> + Send>) -> Result<()> {
+pub fn play_once(
+    tempo: &Tempo,
+    source: Box<dyn Source<Item = i16> + Send>,
+    beats: usize
+) -> Result<()> {
     if let Ok((_stream, stream_handle)) = OutputStream::try_default() {
         // play the pattern
         if let Ok(_) = stream_handle.play_raw(source.convert_samples()) {
             // sleep for the duration of a single measure
-            thread::sleep(measure_duration(tempo));
+            thread::sleep(tempo.step_duration(beats));
             Ok(())
         } else {
             Err(AudioDeviceError())
@@ -153,26 +129,4 @@ fn play_once(tempo: &Tempo, source: Box<dyn Source<Item = i16> + Send>) -> Resul
     } else {
         Err(AudioDeviceError())
     }
-}
-
-/// Computes the duration of a measure.
-fn measure_duration(tempo: &Tempo) -> Duration {
-    Duration::from_secs_f32(1.0 / (tempo.0 as f32 / 60.0 / BEATS_PER_MEASURE as f32))
-}
-
-/// Computes the duration of a step.
-fn step_duration(tempo: &Tempo) -> Duration {
-    measure_duration(tempo) / STEPS_PER_MEASURE as u32
-}
-
-/// Computes the duration to delay a mix with trailing silence when played on repeat.
-/// This is necessary so that playback of the next iteration begins at the end
-/// of the current iteration's measure instead of after its final non-silent step.
-fn delay_pad_duration(tempo: &Tempo, trailing_silent_steps: usize) -> Duration {
-    step_duration(tempo).mul_f32(delay_factor(tempo)) * trailing_silent_steps as u32
-}
-
-/// Computes a factor necessary for delay-padding a mix played on repeat.
-fn delay_factor(tempo: &Tempo) -> f32 {
-    -1.0 / 120.0 * tempo.0 as f32 + 2.0
 }

@@ -161,6 +161,7 @@ use std::path::Path;
 use crate::{error::Result, instrumentation::Instrumentation, pattern::Pattern};
 
 mod audio;
+use audio::{play_once, play_repeat, Tempo};
 mod error;
 mod instrumentation;
 mod pattern;
@@ -193,14 +194,24 @@ struct Opts {
 fn main() -> Result<()> {
     let opts: Opts = Opts::parse();
     let pattern = Pattern::parse(Path::new(&opts.pattern))?;
-    let instrumentation = Instrumentation::parse(Path::new(&opts.instrumentation))?;
 
-    audio::play(
-        pattern,
-        instrumentation,
-        Path::new(&opts.samples),
-        audio::Tempo::from(opts.tempo),
-        opts.repeat,
+    let play = if opts.repeat {
+        play_repeat
+    } else {
+        play_once
+    };
+
+    // Plays a pattern either once or repeatedly at the tempo given using samples
+    // found in the given path.
+    play(
+        &Tempo::from(opts.tempo),
+        pattern
+            .bind(Instrumentation::parse(Path::new(&opts.instrumentation))?)
+            .mix(
+                &Tempo::from(opts.tempo),
+                Path::new(&opts.samples)
+            )?,
+        pattern.len()
     )?;
 
     Ok(())

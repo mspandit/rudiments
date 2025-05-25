@@ -18,13 +18,7 @@ use std::{
     path::Path,
 };
 
-use crate::error::{Error::*, Result};
-
-/// The number of steps in a measure.
-pub const STEPS_PER_MEASURE: usize = 16;
-
-/// The number of beats in a measure.
-pub const BEATS_PER_MEASURE: usize = 4;
+use crate::{error::{Error::*, Result}, audio::Tracks, Instrumentation};
 
 /// Indicates a *play* step.
 const STEP_PLAY: &str = "x";
@@ -86,6 +80,47 @@ impl Pattern {
     pub fn get(&self, i: &Instrument) -> Option<&(Steps, Amplitude)> {
         self.0.get(i)
     }
+
+    pub fn len(&self) -> usize {
+        let mut max_len: usize = 0;
+        for (_, (s, _)) in self.0.iter() {
+            if s.len() > max_len {
+                max_len = s.len();
+            }
+        }
+        max_len
+    }
+
+    /// Binds a pattern's step sequences to audio files.
+    /// Any sequences bound to the same audio file will be unioned.
+    /// The smallest amplitude for instruments bound to the same audio file will be used.
+    pub fn bind(&self, instrumentation: Instrumentation) -> Tracks {
+        let mut aggregate_steps = Steps::zeros(self.len());
+        Tracks::from(
+            instrumentation
+                .into_iter()
+                .map(|(sample_file, instruments)| {
+                    let simplified_steps = instruments.iter().fold(
+                        (Steps::zeros(self.len()), Amplitude::max()),
+                        |mut acc, instrument| {
+                            if let Some((steps, amplitude)) = self.get(instrument) {
+                                // update the aggregate step sequence
+                                aggregate_steps.union(steps);
+
+                                // update the track's step sequence and amplitude
+                                acc.0.union(steps);
+                                acc.1 = acc.1.min(amplitude);
+                            }
+
+                            acc
+                        },
+                    );
+
+                    (sample_file, simplified_steps)
+                })
+                .collect()
+        )
+    }
 }
 
 impl fmt::Display for Pattern {
@@ -121,8 +156,8 @@ pub struct Steps(BitVec);
 
 impl Steps {
     /// Returns a seqence of all zeros.
-    pub fn zeros() -> Steps {
-        Steps(bitvec![0; STEPS_PER_MEASURE])
+    pub fn zeros(steps_per_measure: usize) -> Steps {
+        Steps(bitvec![0; steps_per_measure])
     }
 
     /// Performs an in-place stepwise union of this sequence and the one given.
@@ -135,12 +170,8 @@ impl Steps {
         self.0.iter()
     }
 
-    /// Returns the number of silent steps at the end of this sequence.
-    pub fn trailing_silent_steps(&self) -> usize {
-        match self.0.iter().rposition(|s| *s) {
-            Some(n) => STEPS_PER_MEASURE - (n + 1),
-            None => 0,
-        }
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
@@ -220,7 +251,7 @@ fn parse_instrument(s: &str) -> IResult<&str, &str> {
 fn parse_steps(s: &str) -> IResult<&str, BitVec> {
     let p = fold_many1(
         alt((tag(STEP_PLAY), tag(STEP_SILENT), tag(SEPARATOR))),
-        || BitVec::with_capacity(STEPS_PER_MEASURE),
+        || BitVec::new(),
         |mut acc: BitVec, i| {
             match i {
                 STEP_PLAY => acc.push(true),
@@ -231,7 +262,7 @@ fn parse_steps(s: &str) -> IResult<&str, BitVec> {
         },
     );
 
-    verify(p, |v: &BitVec| v.len() == STEPS_PER_MEASURE)(s)
+    verify(p, |v: &BitVec| v.len() > 0)(s)
 }
 
 /// Parses the amplitude from a track line.
@@ -255,7 +286,7 @@ mod tests {
 
         assert_eq!(r, "");
         assert_eq!(l.0, Instrument::from("a"));
-        assert_eq!(l.1, Steps(bitvec![0; STEPS_PER_MEASURE]));
+        assert_eq!(l.1, Steps(bitvec![0; 16]));
     }
 
     #[test]
@@ -277,6 +308,7 @@ mod tests {
 
     #[test]
     fn test_parse_steps() {
+        use bitvec::prelude::Lsb0;
         let s1 = "";
         let s2 = "|----|";
         let s3 = "|----|----|----|----|-";
@@ -285,15 +317,21 @@ mod tests {
         let s6 = "|x-x-|x-x-|x-x-|x-x-|";
 
         assert!(parse_steps(s1).is_err());
-        assert!(parse_steps(s2).is_err());
-        assert!(parse_steps(s3).is_err());
+        assert_eq!(
+            parse_steps(s2).unwrap(),
+            ("", bitvec![0; 4])
+        );
+        assert_eq!(
+            parse_steps(s3).unwrap(),
+            ("", bitvec![0; 17])
+        );
         assert_eq!(
             parse_steps(s4).unwrap(),
-            ("", bitvec![0; STEPS_PER_MEASURE])
+            ("", bitvec![0; 16])
         );
         assert_eq!(
             parse_steps(s5).unwrap(),
-            ("", bitvec![1; STEPS_PER_MEASURE])
+            ("", bitvec![1; 16])
         );
         assert_eq!(
             parse_steps(s6).unwrap(),

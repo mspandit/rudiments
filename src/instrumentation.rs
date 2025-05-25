@@ -95,7 +95,7 @@ impl fmt::Display for Instrumentation {
 
 /// Represents the location of an audio sample file.
 #[derive(Debug, Eq, Hash, PartialEq)]
-pub struct SampleFile(pub PathBuf);
+pub struct SampleFile(PathBuf);
 
 impl SampleFile {
     /// Returns the path of the sample file.
