@@ -13,6 +13,7 @@ use std::{
     hash::{Hash, Hasher},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
+    time::Duration
 };
 
 use crate::{
@@ -20,9 +21,16 @@ use crate::{
     pattern::Instrument,
 };
 
-use rodio::Decoder;
-use rodio::Source;
-use rodio::source::Buffered;
+use rodio::{
+    Decoder,
+    Source,
+    source::{
+        SineWave,
+        SamplesConverter,
+        FadeOut,
+        Buffered
+    }
+};
 
 /// Represents the contents of an instrumentation file.
 ///
@@ -102,25 +110,67 @@ impl fmt::Display for Instrumentation {
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub struct SampleFile(PathBuf);
 
-pub struct SampleSource {
-    file_path: SampleFile,
-    pub source: Buffered<Decoder<BufReader<File>>>,
+pub enum SampleSource {
+    Sample {
+        file_path: SampleFile,
+        source: Buffered<Decoder<BufReader<File>>>
+    },
+    Calculation {
+        file_path: SampleFile,
+        source: SamplesConverter<FadeOut<SineWave>, i16>
+    },
 }
 
 impl SampleSource {
     pub fn from(samples_path: &Path, sample_file: &SampleFile) -> Result<SampleSource> {
-        let sample_file_path = sample_file.with_parent(samples_path)?;
-        let file = std::fs::File::open(sample_file_path.path())?;
-        Ok(SampleSource {
-            file_path: sample_file_path,
-            source: rodio::Decoder::new(BufReader::new(file))?.buffered(),
-        })
+        if let Ok(sample_file_path) = sample_file.with_parent(samples_path) {
+            let file = std::fs::File::open(sample_file_path.path())?;
+            Ok(SampleSource::Sample {
+                file_path: sample_file_path,
+                source: rodio::Decoder::new(BufReader::new(file))?.buffered(),
+            })
+        } else {
+            Ok(SampleSource::Calculation {
+                file_path: SampleFile(samples_path.to_path_buf()),
+                source: SineWave::new(440.0).fade_out(Duration::from_millis(50)).convert_samples()
+            })
+        }
+    }
+
+    pub fn source(&self) -> Box<dyn Source<Item = i16> + Send + 'static> {
+        match self {
+            Self::Sample { file_path: _, source } => Box::new(source.clone()),
+            Self::Calculation { file_path: _, source } => Box::new(source.clone()),
+        }
     }
 }
 
 impl PartialEq for SampleSource {
     fn eq(&self, other: &Self) -> bool {
-        self.file_path == other.file_path
+        match self {
+            SampleSource::Sample { file_path, source: _ } => {
+                let file_path0 = file_path;
+                match other {
+                    SampleSource::Sample { file_path, source: _ } => {
+                        file_path == file_path0
+                    },
+                    SampleSource::Calculation { file_path, source: _ } => {
+                        file_path == file_path0
+                    }
+                }
+            },
+            SampleSource::Calculation { file_path, source: _ } => {
+                let file_path0 = file_path;
+                match other {
+                    SampleSource::Sample { file_path, source: _ } => {
+                        file_path == file_path0
+                    },
+                    SampleSource::Calculation { file_path, source: _ } => {
+                        file_path == file_path0
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -128,7 +178,10 @@ impl Eq for SampleSource {}
 
 impl Hash for SampleSource {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.file_path.hash(state)
+        match self {
+            SampleSource::Sample { file_path, source: _ } => file_path.hash(state),
+            SampleSource::Calculation { file_path, source: _ } => file_path.hash(state),
+        }
     }
 }
 

@@ -64,7 +64,7 @@ impl Sources {
                     continue;
                 }
                 let delay = tempo.step_duration(1) * (i as u32);
-                controller.add(sample_source.source.clone().amplify(amplitude.value()).delay(delay));
+                controller.add(sample_source.source().amplify(amplitude.value()).delay(delay));
             }
         }
         Ok(Box::new(mixer))

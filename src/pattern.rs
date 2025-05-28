@@ -155,6 +155,13 @@ impl fmt::Display for Instrument {
 pub struct Steps(BitVec);
 
 impl Steps {
+    pub fn new() -> Steps {
+        Steps(BitVec::new())
+    }
+
+    pub fn push(&mut self, val: bool) {
+        self.0.push(val)
+    }
     /// Returns a seqence of all zeros.
     pub fn zeros(steps_per_measure: usize) -> Steps {
         Steps(bitvec![0; steps_per_measure])
@@ -236,7 +243,7 @@ fn parse_track(s: &str) -> IResult<&str, Track> {
         s,
         (
             Instrument::from(instrument),
-            Steps(steps),
+            steps,
             Amplitude::defaulting(amplitude),
         ),
     ))
@@ -248,11 +255,11 @@ fn parse_instrument(s: &str) -> IResult<&str, &str> {
 }
 
 /// Parses the steps from a track line.
-fn parse_steps(s: &str) -> IResult<&str, BitVec> {
+fn parse_steps(s: &str) -> IResult<&str, Steps> {
     let p = fold_many1(
         alt((tag(STEP_PLAY), tag(STEP_SILENT), tag(SEPARATOR))),
-        || BitVec::new(),
-        |mut acc: BitVec, i| {
+        || Steps::new(),
+        |mut acc: Steps, i| {
             match i {
                 STEP_PLAY => acc.push(true),
                 STEP_SILENT => acc.push(false),
@@ -262,7 +269,7 @@ fn parse_steps(s: &str) -> IResult<&str, BitVec> {
         },
     );
 
-    verify(p, |v: &BitVec| v.len() > 0)(s)
+    verify(p, |v: &Steps| v.len() > 0)(s)
 }
 
 /// Parses the amplitude from a track line.
@@ -319,23 +326,23 @@ mod tests {
         assert!(parse_steps(s1).is_err());
         assert_eq!(
             parse_steps(s2).unwrap(),
-            ("", bitvec![0; 4])
+            ("", Steps(bitvec![0; 4]))
         );
         assert_eq!(
             parse_steps(s3).unwrap(),
-            ("", bitvec![0; 17])
+            ("", Steps(bitvec![0; 17]))
         );
         assert_eq!(
             parse_steps(s4).unwrap(),
-            ("", bitvec![0; 16])
+            ("", Steps(bitvec![0; 16]))
         );
         assert_eq!(
             parse_steps(s5).unwrap(),
-            ("", bitvec![1; 16])
+            ("", Steps(bitvec![1; 16]))
         );
         assert_eq!(
             parse_steps(s6).unwrap(),
-            ("", bitvec![1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0])
+            ("", Steps(bitvec![1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]))
         );
     }
 
