@@ -151,7 +151,7 @@ impl fmt::Display for Instrument {
 }
 
 /// The step sequence of a track.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Steps(BitVec);
 
 impl Steps {
@@ -189,7 +189,7 @@ impl fmt::Display for Steps {
 }
 
 /// Represents a track's amplitude in the range of [0,1] inclusive.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Amplitude(f32);
 
 impl Amplitude {

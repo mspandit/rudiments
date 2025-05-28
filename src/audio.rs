@@ -1,9 +1,9 @@
 use rodio::{OutputStream, dynamic_mixer, source::Source};
-use std::{collections::HashMap, fmt, io::BufReader, path::Path, thread, time::Duration};
+use std::{collections::HashMap, fmt, path::Path, thread, time::Duration};
 
 use crate::{
     error::{Error::*, Result},
-    instrumentation::SampleFile,
+    instrumentation::{SampleFile, SampleSource},
     pattern::{Amplitude, Steps},
 };
 
@@ -49,37 +49,46 @@ impl Tempo {
     }
 }
 
-/// A type that represents the fully bound and reduced tracks of a pattern.
-pub struct Tracks(HashMap<SampleFile, (Steps, Amplitude)>);
+pub struct Sources(HashMap<SampleSource, (Steps, Amplitude)>);
 
-impl Tracks {
-    pub fn from(hash_map: HashMap<SampleFile, (Steps, Amplitude)>) -> Tracks {
-        Tracks(hash_map)
-    }
-
-    /// Mixes the tracks together using audio files found in the path given.
+impl Sources {
+    /// Mixes the sources together using audio files found in the path given.
     pub fn mix(
         &self,
         tempo: &Tempo,
-        samples_path: &Path,
     ) -> Result<Box<dyn Source<Item = i16> + Send>> {
         let (controller, mixer) = dynamic_mixer::mixer(CHANNELS, SAMPLE_RATE);
-
-        for (sample_file, (steps, amplitude)) in self.0.iter() {
-            let sample_file_path = sample_file.with_parent(samples_path)?;
-            let file = std::fs::File::open(sample_file_path.path())?;
-            let source = rodio::Decoder::new(BufReader::new(file))?.buffered();
-
+        for (sample_source, (steps, amplitude)) in self.0.iter() {
             for (i, step) in steps.iter().enumerate() {
                 if !step {
                     continue;
                 }
-                let delay = tempo.step_duration(i);
-                controller.add(source.clone().amplify(amplitude.value()).delay(delay));
+                let delay = tempo.step_duration(1) * (i as u32);
+                controller.add(sample_source.source.clone().amplify(amplitude.value()).delay(delay));
             }
         }
-
         Ok(Box::new(mixer))
+    }
+}
+
+/// A type that represents the fully bound and reduced tracks of a pattern.
+pub struct Tracks(HashMap<SampleFile, (Steps, Amplitude)>);
+
+impl Tracks {
+    /// Creates sources using audio files found in the path given.
+    pub fn sources(&self, samples_path: &Path) -> Result<Sources> {
+        let mut sample_map = HashMap::new();
+        for (sample_file, (steps, amplitude)) in self.0.iter() {
+            sample_map.insert(
+                SampleSource::from(samples_path, sample_file)?,
+                (steps.clone(), amplitude.clone())
+            );
+        }
+        Ok(Sources(sample_map))
+    }
+
+    pub fn from(hash_map: HashMap<SampleFile, (Steps, Amplitude)>) -> Tracks {
+        Tracks(hash_map)
     }
 }
 

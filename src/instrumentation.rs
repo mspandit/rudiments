@@ -10,6 +10,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     fs::File,
+    hash::{Hash, Hasher},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
 };
@@ -18,6 +19,10 @@ use crate::{
     error::{Error::*, Result},
     pattern::Instrument,
 };
+
+use rodio::Decoder;
+use rodio::Source;
+use rodio::source::Buffered;
 
 /// Represents the contents of an instrumentation file.
 ///
@@ -96,6 +101,36 @@ impl fmt::Display for Instrumentation {
 /// Represents the location of an audio sample file.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub struct SampleFile(PathBuf);
+
+pub struct SampleSource {
+    file_path: SampleFile,
+    pub source: Buffered<Decoder<BufReader<File>>>,
+}
+
+impl SampleSource {
+    pub fn from(samples_path: &Path, sample_file: &SampleFile) -> Result<SampleSource> {
+        let sample_file_path = sample_file.with_parent(samples_path)?;
+        let file = std::fs::File::open(sample_file_path.path())?;
+        Ok(SampleSource {
+            file_path: sample_file_path,
+            source: rodio::Decoder::new(BufReader::new(file))?.buffered(),
+        })
+    }
+}
+
+impl PartialEq for SampleSource {
+    fn eq(&self, other: &Self) -> bool {
+        self.file_path == other.file_path
+    }
+}
+
+impl Eq for SampleSource {}
+
+impl Hash for SampleSource {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.file_path.hash(state)
+    }
+}
 
 impl SampleFile {
     /// Returns the path of the sample file.

@@ -207,10 +207,8 @@ fn main() -> Result<()> {
         &Tempo::from(opts.tempo),
         pattern
             .bind(Instrumentation::parse(Path::new(&opts.instrumentation))?)
-            .mix(
-                &Tempo::from(opts.tempo),
-                Path::new(&opts.samples)
-            )?,
+            .sources(Path::new(&opts.samples))?
+            .mix(&Tempo::from(opts.tempo))?,
         pattern.len()
     )?;
 
