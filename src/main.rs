@@ -165,6 +165,7 @@ use audio::{play_once, play_repeat, Tempo};
 mod error;
 mod instrumentation;
 mod pattern;
+mod steps;
 
 /// A step-sequencing drum machine
 #[derive(Parser, Debug)]

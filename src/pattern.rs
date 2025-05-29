@@ -1,6 +1,5 @@
 extern crate nom;
 
-use bitvec::{ prelude::{ BitVec, LocalBits }, bitvec, slice::Iter };
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag},
@@ -18,7 +17,15 @@ use std::{
     path::Path,
 };
 
-use crate::{error::{Error::*, Result}, audio::Tracks, Instrumentation};
+use crate::{
+    error::{
+        Error::*,
+        Result
+    },
+    audio::Tracks,
+    Instrumentation,
+    steps::Steps,
+};
 
 /// Indicates a *play* step.
 const STEP_PLAY: &str = "x";
@@ -28,6 +35,25 @@ const STEP_SILENT: &str = "-";
 
 /// The beat separator in a step sequence.
 const SEPARATOR: &str = "|";
+
+/// The notes
+const NOTE_A:  &str = "A";
+const NOTE_AS: &str = "A#";
+const NOTE_BF: &str = "Bb";
+const NOTE_B:  &str = "B";
+const NOTE_C:  &str = "C";
+const NOTE_CS: &str = "C#";
+const NOTE_DF: &str = "Db";
+const NOTE_D:  &str = "D";
+const NOTE_DS: &str = "D#";
+const NOTE_EF: &str = "Eb";
+const NOTE_E:  &str = "E";
+const NOTE_F:  &str = "F";
+const NOTE_FS: &str = "F#";
+const NOTE_GF: &str = "Gb";
+const NOTE_G:  &str = "G";
+const NOTE_GS: &str = "G#";
+const NOTE_AF: &str = "Ab";
 
 /// Reperesents the contents of a pattern file.
 ///
@@ -105,10 +131,10 @@ impl Pattern {
                         |mut acc, instrument| {
                             if let Some((steps, amplitude)) = self.get(instrument) {
                                 // update the aggregate step sequence
-                                aggregate_steps.union(steps);
+                                aggregate_steps = aggregate_steps.union(steps);
 
                                 // update the track's step sequence and amplitude
-                                acc.0.union(steps);
+                                acc.0 = acc.0.union(steps);
                                 acc.1 = acc.1.min(amplitude);
                             }
 
@@ -145,51 +171,6 @@ impl From<&str> for Instrument {
 }
 
 impl fmt::Display for Instrument {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// The step sequence of a track.
-#[derive(Debug, PartialEq, Clone)]
-pub struct Steps(BitVec);
-
-impl Steps {
-    pub fn new() -> Steps {
-        Steps(BitVec::new())
-    }
-
-    pub fn push(&mut self, val: bool) {
-        self.0.push(val)
-    }
-    /// Returns a seqence of all zeros.
-    pub fn zeros(steps_per_measure: usize) -> Steps {
-        Steps(bitvec![0; steps_per_measure])
-    }
-
-    /// Performs an in-place stepwise union of this sequence and the one given.
-    pub fn union(&mut self, other: &Steps) {
-        self.0 |= other.0.clone();
-    }
-
-    /// Returns an immutable iterator over the step values.
-    pub fn iter(&self) -> Iter<usize, LocalBits> {
-        self.0.iter()
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-}
-
-impl From<BitVec> for Steps {
-    #[inline]
-    fn from(bs: BitVec) -> Steps {
-        Steps(bs)
-    }
-}
-
-impl fmt::Display for Steps {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -257,12 +238,16 @@ fn parse_instrument(s: &str) -> IResult<&str, &str> {
 /// Parses the steps from a track line.
 fn parse_steps(s: &str) -> IResult<&str, Steps> {
     let p = fold_many1(
-        alt((tag(STEP_PLAY), tag(STEP_SILENT), tag(SEPARATOR))),
+        alt((tag(STEP_PLAY), tag(STEP_SILENT), tag(SEPARATOR), tag(NOTE_A), tag(NOTE_B), tag(NOTE_C), tag(NOTE_D))),
         || Steps::new(),
         |mut acc: Steps, i| {
             match i {
-                STEP_PLAY => acc.push(true),
-                STEP_SILENT => acc.push(false),
+                STEP_PLAY => acc.push(255, 440.0),
+                STEP_SILENT => acc.push(0, 0.0),
+                NOTE_A => acc.push(255, 440.0),
+                NOTE_B => acc.push(255, 493.88),
+                NOTE_C => acc.push(255, 523.25),
+                NOTE_D => acc.push(0x3f, 587.33),
                 _ => (),
             }
             acc
@@ -283,6 +268,7 @@ fn parse_amplitude(s: &str) -> IResult<&str, Option<f32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bitvec::{bitvec, prelude::Lsb0};
 
     #[test]
     fn test_parse_track() {
@@ -293,7 +279,7 @@ mod tests {
 
         assert_eq!(r, "");
         assert_eq!(l.0, Instrument::from("a"));
-        assert_eq!(l.1, Steps(bitvec![0; 16]));
+        assert_eq!(l.1, Steps::from(bitvec![0; 16]));
     }
 
     #[test]
@@ -315,7 +301,6 @@ mod tests {
 
     #[test]
     fn test_parse_steps() {
-        use bitvec::prelude::Lsb0;
         let s1 = "";
         let s2 = "|----|";
         let s3 = "|----|----|----|----|-";
@@ -326,23 +311,23 @@ mod tests {
         assert!(parse_steps(s1).is_err());
         assert_eq!(
             parse_steps(s2).unwrap(),
-            ("", Steps(bitvec![0; 4]))
+            ("", Steps::from(bitvec![0; 4]))
         );
         assert_eq!(
             parse_steps(s3).unwrap(),
-            ("", Steps(bitvec![0; 17]))
+            ("", Steps::from(bitvec![0; 17]))
         );
         assert_eq!(
             parse_steps(s4).unwrap(),
-            ("", Steps(bitvec![0; 16]))
+            ("", Steps::from(bitvec![0; 16]))
         );
         assert_eq!(
             parse_steps(s5).unwrap(),
-            ("", Steps(bitvec![1; 16]))
+            ("", Steps::from(bitvec![1; 16]))
         );
         assert_eq!(
             parse_steps(s6).unwrap(),
-            ("", Steps(bitvec![1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]))
+            ("", Steps::from(bitvec![1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]))
         );
     }
 

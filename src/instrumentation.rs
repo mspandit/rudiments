@@ -6,14 +6,7 @@ use nom::{
     IResult,
 };
 use std::{
-    collections::hash_map::IntoIter,
-    collections::{HashMap, HashSet},
-    fmt,
-    fs::File,
-    hash::{Hash, Hasher},
-    io::{BufRead, BufReader},
-    path::{Path, PathBuf},
-    time::Duration
+    collections::{hash_map::IntoIter, HashMap, HashSet}, convert::TryInto, fmt, fs::File, hash::{Hash, Hasher}, io::{BufRead, BufReader}, path::{Path, PathBuf}, time::Duration
 };
 
 use crate::{
@@ -115,9 +108,9 @@ pub enum SampleSource {
         file_path: SampleFile,
         source: Buffered<Decoder<BufReader<File>>>
     },
-    Calculation {
+    Synth {
         file_path: SampleFile,
-        source: SamplesConverter<FadeOut<SineWave>, i16>
+        source: HashMap<u16, SamplesConverter<FadeOut<SineWave>, i16>>
     },
 }
 
@@ -130,17 +123,29 @@ impl SampleSource {
                 source: rodio::Decoder::new(BufReader::new(file))?.buffered(),
             })
         } else {
-            Ok(SampleSource::Calculation {
+            Ok(SampleSource::Synth {
                 file_path: SampleFile(samples_path.to_path_buf()),
-                source: SineWave::new(440.0).fade_out(Duration::from_millis(50)).convert_samples()
+                source: HashMap::from([
+                    (44000, SineWave::new(440.00).fade_out(Duration::from_millis(50)).convert_samples()),
+                    (49388, SineWave::new(493.88).fade_out(Duration::from_millis(50)).convert_samples()),
+                    (52325, SineWave::new(523.25).fade_out(Duration::from_millis(50)).convert_samples()),
+                    (58733, SineWave::new(587.33).fade_out(Duration::from_millis(50)).convert_samples()),
+                ]),
             })
         }
     }
 
-    pub fn source(&self) -> Box<dyn Source<Item = i16> + Send + 'static> {
+    pub fn source(&self, freq: f32) -> Box<dyn Source<Item = i16> + Send + 'static> {
         match self {
             Self::Sample { file_path: _, source } => Box::new(source.clone()),
-            Self::Calculation { file_path: _, source } => Box::new(source.clone()),
+            Self::Synth { file_path: _, source } => {
+                let ifreq: u16 = (freq * 100.0).round() as u16;
+                if let Some(src) = source.get(&ifreq) {
+                    Box::new(src.clone())
+                } else {
+                    Box::new(SineWave::new(440.0).fade_out(Duration::from_millis(50)).convert_samples())
+                }
+            },
         }
     }
 }
@@ -154,18 +159,18 @@ impl PartialEq for SampleSource {
                     SampleSource::Sample { file_path, source: _ } => {
                         file_path == file_path0
                     },
-                    SampleSource::Calculation { file_path, source: _ } => {
+                    SampleSource::Synth { file_path, source: _ } => {
                         file_path == file_path0
                     }
                 }
             },
-            SampleSource::Calculation { file_path, source: _ } => {
+            SampleSource::Synth { file_path, source: _ } => {
                 let file_path0 = file_path;
                 match other {
                     SampleSource::Sample { file_path, source: _ } => {
                         file_path == file_path0
                     },
-                    SampleSource::Calculation { file_path, source: _ } => {
+                    SampleSource::Synth { file_path, source: _ } => {
                         file_path == file_path0
                     }
                 }
@@ -180,7 +185,7 @@ impl Hash for SampleSource {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
             SampleSource::Sample { file_path, source: _ } => file_path.hash(state),
-            SampleSource::Calculation { file_path, source: _ } => file_path.hash(state),
+            SampleSource::Synth { file_path, source: _ } => file_path.hash(state),
         }
     }
 }

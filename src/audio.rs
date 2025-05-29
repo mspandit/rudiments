@@ -4,7 +4,8 @@ use std::{collections::HashMap, fmt, path::Path, thread, time::Duration};
 use crate::{
     error::{Error::*, Result},
     instrumentation::{SampleFile, SampleSource},
-    pattern::{Amplitude, Steps},
+    pattern::Amplitude,
+    steps::Steps,
 };
 
 /// Number of playback channels.
@@ -59,12 +60,13 @@ impl Sources {
     ) -> Result<Box<dyn Source<Item = i16> + Send>> {
         let (controller, mixer) = dynamic_mixer::mixer(CHANNELS, SAMPLE_RATE);
         for (sample_source, (steps, amplitude)) in self.0.iter() {
-            for (i, step) in steps.iter().enumerate() {
-                if !step {
+            for (i, (step_vel, step_freq)) in steps.iter().enumerate() {
+                if 0 == *step_vel {
                     continue;
                 }
+                let amp_vel = *step_vel as f32 / 256.0 * amplitude.value();
                 let delay = tempo.step_duration(1) * (i as u32);
-                controller.add(sample_source.source().amplify(amplitude.value()).delay(delay));
+                controller.add(sample_source.source(*step_freq).amplify(amp_vel).delay(delay));
             }
         }
         Ok(Box::new(mixer))
